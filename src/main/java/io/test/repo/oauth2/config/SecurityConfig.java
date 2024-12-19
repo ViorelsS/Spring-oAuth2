@@ -11,6 +11,7 @@ import io.test.repo.oauth2.config.jwtConfig.JwtRefreshTokenFilter;
 import io.test.repo.oauth2.config.jwtConfig.JwtTokenUtils;
 import io.test.repo.oauth2.config.userConfig.UserInfoManagerConfig;
 import io.test.repo.oauth2.repository.RefreshTokenRepository;
+import io.test.repo.oauth2.service.LogoutHandlerService;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,7 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
@@ -47,13 +49,15 @@ public class SecurityConfig {
 	private final RSAKeyRecord rsaKeyRecord;
 	private final JwtTokenUtils jwtTokenUtils;
 	private final RefreshTokenRepository refreshTokenRepo;
+	private final LogoutHandlerService logoutHandlerService;
 
 	public SecurityConfig(UserInfoManagerConfig userInfoManagerConfig, RSAKeyRecord rsaKeyRecord,
-			JwtTokenUtils jwtTokenUtils, RefreshTokenRepository refreshTokenRepo) {
+			JwtTokenUtils jwtTokenUtils, RefreshTokenRepository refreshTokenRepo, LogoutHandlerService logoutHandlerService) {
 		this.userInfoManagerConfig = userInfoManagerConfig;
 		this.rsaKeyRecord = rsaKeyRecord;
 		this.jwtTokenUtils = jwtTokenUtils;
 		this.refreshTokenRepo = refreshTokenRepo;
+		this.logoutHandlerService = logoutHandlerService;
 	}
 
 	@Bean
@@ -124,6 +128,32 @@ public class SecurityConfig {
 					ex.authenticationEntryPoint(new BearerTokenAuthenticationEntryPoint());
 					ex.accessDeniedHandler(new BearerTokenAccessDeniedHandler());
 				}).httpBasic(withDefaults()).build();
+	}
+
+	@Order(4)
+	@Bean
+	public SecurityFilterChain logoutSecurityFilterChain(HttpSecurity httpSecurity) throws Exception {
+		return httpSecurity.securityMatcher(new AntPathRequestMatcher("/logout/**")).csrf(AbstractHttpConfigurer::disable)
+				.authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
+				.oauth2ResourceServer(oauth2 -> oauth2.jwt(withDefaults()))
+				.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+				.addFilterBefore(new JwtAccessTokenFilter(rsaKeyRecord, jwtTokenUtils),
+						UsernamePasswordAuthenticationFilter.class).logout(
+						logout -> logout.logoutUrl("/logout").addLogoutHandler(logoutHandlerService)
+								.logoutSuccessHandler(((request, response, authentication) -> SecurityContextHolder.clearContext())))
+				.exceptionHandling(ex -> {
+					log.error("[SecurityConfig:logoutSecurityFilterChain] Exception due to :{}", ex);
+					ex.authenticationEntryPoint(new BearerTokenAuthenticationEntryPoint());
+					ex.accessDeniedHandler(new BearerTokenAccessDeniedHandler());
+				}).build();
+	}
+
+	@Order(5)
+	@Bean
+	public SecurityFilterChain registerSecurityFilterChain(HttpSecurity httpSecurity) throws Exception {
+		return httpSecurity.securityMatcher(new AntPathRequestMatcher("/sign-up/**")).csrf(AbstractHttpConfigurer::disable)
+				.authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+				.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)).build();
 	}
 
 }
